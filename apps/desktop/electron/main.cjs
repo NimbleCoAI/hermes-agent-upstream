@@ -1183,20 +1183,11 @@ async function ensureRuntime(backend) {
     await runProcess(systemPython, ['-m', 'venv', VENV_ROOT])
   }
 
-  // Step 2b: On Windows, preflight Git Bash. Hermes' terminal tool calls
-  // bash.exe directly (tools/environments/local.py); without it the agent
-  // can't run a terminal command. We surface this here as a clear, actionable
-  // error rather than letting the user discover it on their first chat
-  // ("hey, run `ls`" → opaque tool failure). The NSIS prereq page handles
-  // this for installer users; this check catches everyone else (.msi users,
-  // npm run dev with a fresh checkout, manual installs, etc.).
+  // Step 2b: Git Bash powers the Windows terminal tool, but it is no longer
+  // part of the baseline GUI installer. Don't block the app from booting;
+  // terminal-only workflows can surface the missing dependency when needed.
   if (IS_WINDOWS && !findGitBash()) {
-    throw new Error(
-      'Git for Windows is required for Hermes on Windows (provides Git Bash, ' +
-        "which the agent's terminal tool uses). Install it from " +
-        'https://git-scm.com/download/win or run `winget install -e --id Git.Git`, ' +
-        'then relaunch Hermes.'
-    )
+    rememberLog('Git Bash not found; terminal commands will be unavailable until Git for Windows is installed.')
   }
 
   // Step 3: Ensure deps are installed. We compare a marker against the

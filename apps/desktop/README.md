@@ -24,21 +24,21 @@ HERMES_DESKTOP_HERMES_ROOT=/path/to/your/clone npm run dev
 
 ### Runtime prerequisites
 
-Hermes Desktop needs:
+Hermes Desktop's baseline installer prerequisites are:
 
 - **Python 3.11+** — for the agent runtime, dashboard backend, and tool execution. (required)
-- **Git for Windows** (Windows only) — provides Git Bash, which Hermes' terminal tool calls directly. Linux and macOS already ship a system bash. (required)
-- **ripgrep** — used by Hermes' `search_files` tool for fast `.gitignore`-aware file/content search. Recommended on all platforms; Hermes falls back to `grep`/`find` if missing (works but slower and noisier).
+- **Node.js LTS** — for browser/UI tooling and Node-backed capabilities. (required)
 
-The packaged Windows installer (`Hermes-*.exe`) detects all three at install time. Required items missing are auto-installed via `winget install -e --id Python.Python.3.11 --scope user` and `winget install -e --id Git.Git`. The recommended ripgrep is offered as `winget install -e --id BurntSushi.ripgrep.MSVC --scope user`. If `winget` isn't available the installer shows manual download URLs and lets you continue. The MSI installer (`Hermes-*.msi`) doesn't run the prereq page — enterprise deploys are expected to handle prereqs out-of-band.
+The packaged Windows installer (`Hermes-*.exe`) is intentionally barebones: it installs the GUI and ensures Python 3.11 + Node.js are present via `winget` when possible. On first launch, the GUI handles the Hermes-specific work: syncing the bundled agent payload, creating the virtualenv, installing Python dependencies, and showing progress in the onboarding UI. The MSI installer does not run the prerequisite page, so enterprise deploys should preinstall Python and Node.js out-of-band.
 
-For dev (`npm run dev`) the Python and Git Bash checks happen at first launch via the Electron bootstrapper, which throws a clear error if either prereq is missing. Manual install commands you can run yourself:
+For dev (`npm run dev`) the Python check happens at first launch via the Electron bootstrapper. Manual install commands you can run yourself:
 
 ```powershell
 winget install -e --id Python.Python.3.11 --scope user
-winget install -e --id Git.Git
-winget install -e --id BurntSushi.ripgrep.MSVC --scope user
+winget install -e --id OpenJS.NodeJS.LTS
 ```
+
+Git for Windows is still needed for Hermes' terminal tool on Windows, but it is no longer part of the baseline GUI installer path.
 
 ## Development
 
@@ -222,7 +222,7 @@ The desktop resolves a Hermes backend in this order:
 3. `pip install -e HERMES_HOME/hermes-agent` — `pyproject.toml` is the single source of truth for dependencies.
 4. Stamp `.hermes-desktop-runtime.json` with the schema version + pyproject hash + factory version.
 
-Subsequent launches compare the marker against the active `pyproject.toml` and skip steps 2-4 when nothing has changed.
+Subsequent launches compare the marker against the active `pyproject.toml` and skip venv/dependency work when nothing has changed.
 
 ### Upgrades
 
