@@ -731,12 +731,29 @@ def _block(event: str, sid: str, payload: dict, timeout: int = 300) -> str:
     _pending[rid] = (sid, ev)
     payload["request_id"] = rid
     _pending_prompt_payloads[rid] = (event, dict(payload))
+    answered = False
     try:
         _emit(event, sid, payload)
-        ev.wait(timeout=timeout)
+        answered = ev.wait(timeout=timeout)
     finally:
         _pending.pop(rid, None)
         _pending_prompt_payloads.pop(rid, None)
+        # If the wait timed out without anyone calling _set_answer the
+        # client overlay (clarify/sudo/secret prompt) is still mounted
+        # and capturing keystrokes — the agent thread is about to
+        # resume on an empty answer, so we MUST tell the client to
+        # tear the prompt down or the UI is stuck until next message.
+        if not answered:
+            try:
+                _emit(
+                    "prompt.expire",
+                    sid,
+                    {"request_id": rid, "kind": event.split(".", 1)[0]},
+                )
+            except Exception:
+                # _emit can theoretically throw if the transport vanished
+                # mid-shutdown; expiry is best-effort.
+                pass
     return _answers.pop(rid, "")
 
 

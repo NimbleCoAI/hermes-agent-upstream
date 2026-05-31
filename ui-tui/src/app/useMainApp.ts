@@ -33,7 +33,7 @@ import { createSlashHandler } from './createSlashHandler.js'
 import { planGatewayRecovery } from './gatewayRecovery.js'
 import { getInputSelection } from './inputSelectionStore.js'
 import { type GatewayRpc, type TranscriptRow } from './interfaces.js'
-import { $overlayState, patchOverlayState } from './overlayStore.js'
+import { $overlayState, getOverlayState, patchOverlayState } from './overlayStore.js'
 import { scrollWithSelectionBy } from './scroll.js'
 import { turnController } from './turnController.js'
 import { patchTurnState, useTurnSelector } from './turnStore.js'
@@ -582,6 +582,17 @@ export function useMainApp(gw: GatewayClient) {
 
       rpc<ClarifyRespondResponse>('clarify.respond', { answer, request_id: clarify.requestId }).then(r => {
         if (!r) {
+          // RPC failed — most often "no pending clarify request" because the
+          // server-side _block already timed out.  The prompt.expire event
+          // SHOULD have torn the overlay down already, but in case it didn't
+          // (transport hiccup, stale entry, etc.) we MUST clear it here or
+          // the user is stuck looking at a dead prompt that captures every
+          // keystroke.  Better to lose the optional turn-trail line than
+          // leave a zombie overlay anchored over the composer.
+          if (getOverlayState().clarify?.requestId === clarify.requestId) {
+            patchOverlayState({ clarify: null })
+          }
+
           return
         }
 

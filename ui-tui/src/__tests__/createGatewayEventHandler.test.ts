@@ -1113,4 +1113,53 @@ describe('createGatewayEventHandler', () => {
       vi.useRealTimers()
     }
   })
+
+  // ─── prompt.expire ────────────────────────────────────────────────
+  // The TUI overlay (clarify/sudo/secret) lives in overlayStore until
+  // someone clears it. If the user never answers, server-side _block
+  // times out after ~5 min and emits prompt.expire so the client tears
+  // the box down — otherwise the (1-N) choice box stays anchored over
+  // the composer, capturing every keystroke, while the assistant turn
+  // streams text below it. (User-reported bug: "shit just overflows
+  // and i cant escape out cause the choice box doesnt go away".)
+
+  it('clears a stale clarify overlay when server emits prompt.expire', () => {
+    const appended: Msg[] = []
+    const onEvent = createGatewayEventHandler(buildCtx(appended))
+
+    onEvent({
+      payload: { choices: ['yes', 'no'], question: 'continue?', request_id: 'rid-clarify-1' },
+      type: 'clarify.request'
+    } as any)
+    expect(getOverlayState().clarify).toMatchObject({ requestId: 'rid-clarify-1' })
+
+    onEvent({ payload: { kind: 'clarify', request_id: 'rid-clarify-1' }, type: 'prompt.expire' } as any)
+    expect(getOverlayState().clarify).toBeNull()
+  })
+
+  it('clears a stale sudo overlay when server emits prompt.expire', () => {
+    const appended: Msg[] = []
+    const onEvent = createGatewayEventHandler(buildCtx(appended))
+
+    onEvent({ payload: { request_id: 'rid-sudo-1' }, type: 'sudo.request' } as any)
+    expect(getOverlayState().sudo).toMatchObject({ requestId: 'rid-sudo-1' })
+
+    onEvent({ payload: { kind: 'sudo', request_id: 'rid-sudo-1' }, type: 'prompt.expire' } as any)
+    expect(getOverlayState().sudo).toBeNull()
+  })
+
+  it('ignores prompt.expire whose request_id does not match the current overlay', () => {
+    // A late expiry for a stale request must NOT clobber a fresh prompt
+    // that opened in the meantime (rare race, but the only safe rule).
+    const appended: Msg[] = []
+    const onEvent = createGatewayEventHandler(buildCtx(appended))
+
+    onEvent({
+      payload: { choices: ['yes', 'no'], question: 'second q?', request_id: 'rid-clarify-2' },
+      type: 'clarify.request'
+    } as any)
+
+    onEvent({ payload: { kind: 'clarify', request_id: 'rid-clarify-stale' }, type: 'prompt.expire' } as any)
+    expect(getOverlayState().clarify).toMatchObject({ requestId: 'rid-clarify-2' })
+  })
 })

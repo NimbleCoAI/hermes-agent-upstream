@@ -683,6 +683,29 @@ export function createGatewayEventHandler(ctx: GatewayEventHandlerContext): (ev:
 
         return
 
+      case 'prompt.expire': {
+        // Server-side _block timed out waiting for an answer.  The Python
+        // agent thread has already resumed on an empty string; if we don't
+        // tear the overlay down here it stays mounted, swallows keystrokes,
+        // and looks like garbage as the next assistant turn streams in.
+        // Match by request_id so a late expiry can't clobber a different
+        // prompt that opened in the meantime.
+        const { kind, request_id } = ev.payload
+        const ov = getOverlayState()
+
+        if (kind === 'clarify' && ov.clarify?.requestId === request_id) {
+          patchOverlayState({ clarify: null })
+        } else if (kind === 'sudo' && ov.sudo?.requestId === request_id) {
+          patchOverlayState({ sudo: null })
+        } else if (kind === 'secret' && ov.secret?.requestId === request_id) {
+          patchOverlayState({ secret: null })
+        }
+
+        sys(`prompt timed out — ${kind} request cancelled`)
+
+        return
+      }
+
       case 'background.complete':
         dropBgTask(ev.payload.task_id)
         sys(`[bg ${ev.payload.task_id}] ${ev.payload.text}`)

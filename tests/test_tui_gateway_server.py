@@ -5158,3 +5158,90 @@ def test_notification_poller_requeues_when_busy(monkeypatch):
         assert requeued["session_id"] == "proc_busy_test"
     finally:
         server._sessions.pop("sid_busy", None)
+
+
+# ---------------------------------------------------------------------------
+# _block must emit a `prompt.expire` event when it times out without an
+# answer.  Without it, the TUI overlay (the (1-N) choice box) sits forever
+# capturing keystrokes while the assistant resumes streaming below it —
+# user reports "shit just overflows and I can't escape out".
+# ---------------------------------------------------------------------------
+
+
+def test_block_emits_prompt_expire_on_timeout(monkeypatch):
+    emitted = []
+    monkeypatch.setattr(server, "_emit", lambda *a, **kw: emitted.append(a))
+
+    # 50ms timeout so we don't make the suite wait — _block.timeout=300 in
+    # real callers, but the path under test is the same.
+    answer = server._block(
+        "clarify.request",
+        "sid_xyz",
+        {"question": "ok?", "choices": ["yes", "no"]},
+        timeout=0.05,
+    )
+
+    # Agent gets empty string — proves we resumed on timeout.
+    assert answer == ""
+
+    kinds = [e[0] for e in emitted]
+    assert "clarify.request" in kinds, f"expected clarify.request, got {kinds}"
+    assert "prompt.expire" in kinds, (
+        "CRITICAL: _block timed out without emitting prompt.expire — "
+        "the client overlay will stay mounted and capture keystrokes "
+        "until the next message clears it"
+    )
+
+    expire = next(e for e in emitted if e[0] == "prompt.expire")
+    # _emit signature: (event, sid, payload)
+    assert expire[1] == "sid_xyz"
+    payload = expire[2]
+    assert payload["kind"] == "clarify"
+    assert "request_id" in payload and payload["request_id"]
+
+
+def test_block_does_not_emit_prompt_expire_when_answered(monkeypatch):
+    emitted = []
+    monkeypatch.setattr(server, "_emit", lambda *a, **kw: emitted.append(a))
+
+    # Set the answer from another thread while _block is waiting.
+    def _answer_after_delay():
+        # Wait until the pending entry exists, then resolve it.
+        for _ in range(100):
+            if server._pending:
+                rid = next(iter(server._pending))
+                server._answers[rid] = "yes"
+                server._pending[rid][1].set()
+                return
+            time.sleep(0.005)
+
+    threading.Thread(target=_answer_after_delay, daemon=True).start()
+
+    answer = server._block(
+        "clarify.request",
+        "sid_xyz",
+        {"question": "ok?", "choices": ["yes", "no"]},
+        timeout=2,
+    )
+
+    assert answer == "yes"
+    kinds = [e[0] for e in emitted]
+    assert "prompt.expire" not in kinds, (
+        "regression: prompt.expire fired even though the user answered — "
+        "would race-clear the overlay AFTER the legitimate answer"
+    )
+
+
+def test_block_emit_prompt_expire_kind_matches_event_prefix(monkeypatch):
+    """sudo/secret prompts also need expire — kind is derived from the
+    event name (`sudo.request` → `sudo`)."""
+    emitted = []
+    monkeypatch.setattr(server, "_emit", lambda *a, **kw: emitted.append(a))
+
+    server._block("sudo.request", "sid_x", {}, timeout=0.05)
+    server._block("secret.request", "sid_x", {"prompt": "p", "env_var": "X"}, timeout=0.05)
+
+    expires = [e for e in emitted if e[0] == "prompt.expire"]
+    kinds = [e[2]["kind"] for e in expires]
+    assert "sudo" in kinds
+    assert "secret" in kinds
